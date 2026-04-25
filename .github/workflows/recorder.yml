@@ -1,0 +1,41 @@
+name: Recorder Stream
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL del stream"
+        required: true
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+
+      - name: Instalar FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Ejecutar script
+        env:
+          STREAM_URL: ${{ github.event.inputs.url }}
+        run: python recorder/grabar.py
+
+      - name: Subir video como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video
+          path: recorder/*.mp4
