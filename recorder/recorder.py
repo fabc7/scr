@@ -89,18 +89,17 @@ async def grabar_stream(url_perfil):
                 pass
 
             print(f"\n¡Grabando directamente desde la pantalla de forma continua!")
-            print(f"El bot grabará hasta que el stream termine o la modelo se desconecte.")
+            print(f"El bot grabará hasta llegar a 10 MB, o si el stream termina.")
             
-            # Loop infinito monitoreando el estado del stream
-            # Usamos un contador para asegurar que si no se reciben datos nuevos por un tiempo, se asume que terminó.
-            # También revisaremos si aparece la pantalla de "Offline"
             segundos_sin_datos = 0
             tamano_anterior = 0
+            # Definimos el límite máximo en bytes (10 MB)
+            LIMITE_BYTES = 10 * 1024 * 1024 
             
             while True:
                 await asyncio.sleep(5) # Revisar cada 5 segundos
                 
-                # Calcular cuánto ha crecido el archivo para saber si sigue transmitiendo
+                # Calcular el peso total de todos los fragmentos temporales
                 tamano_actual = sum(os.path.getsize(info["nombre"]) for info in archivos_crudos.values() if os.path.exists(info["nombre"]))
                 
                 if tamano_actual > tamano_anterior:
@@ -109,26 +108,33 @@ async def grabar_stream(url_perfil):
                 else:
                     segundos_sin_datos += 5
                     
-                # Si pasa 30 segundos sin recibir datos de video nuevos, o aparece texto de "offline"
+                # Mostrar progreso en MB
+                mb_descargados = tamano_actual / (1024 * 1024)
+                print(f"Grabando... Tamaño actual: {mb_descargados:.2f} MB / 10 MB", end="\r")
+
+                # ==========================================
+                # NUEVA REGLA: Si llega a 10 MB, se detiene
+                # ==========================================
+                if tamano_actual >= LIMITE_BYTES:
+                    print(f"\n\n[!] Límite de 10 MB alcanzado ({mb_descargados:.2f} MB). Finalizando grabación...")
+                    break
+                    
+                # Si pasa 30 segundos sin recibir datos de video nuevos
                 if segundos_sin_datos >= 30:
-                    print("\n[!] El flujo de video se ha detenido. Finalizando grabación...")
+                    print("\n\n[!] El flujo de video se ha detenido. Finalizando grabación...")
                     break
                     
                 # Verificar visualmente si la página indica que la modelo se fue
                 try:
                     offline_text = page.locator("text='Offline', text='is offline', .offline-screen")
                     if await offline_text.count() > 0:
-                        print("\n[!] Se detectó la pantalla de Offline. Finalizando grabación...")
+                        print("\n\n[!] Se detectó la pantalla de Offline. Finalizando grabación...")
                         break
                 except Exception:
                     pass
-                    
-                # Mostrar progreso en MB
-                mb_descargados = tamano_actual / (1024 * 1024)
-                print(f"Grabando... Tamaño actual: {mb_descargados:.2f} MB", end="\r")
                 
         except Exception as e:
-            print(f"Aviso: Error en navegación: {e}")
+            print(f"\nAviso: Error en navegación: {e}")
 
         await browser.close()
 
@@ -171,11 +177,11 @@ async def grabar_stream(url_perfil):
 
         if os.path.exists(archivo_final):
             print(f"\n¡ÉXITO! Archivo guardado como {archivo_final} ({os.path.getsize(archivo_final)} bytes).")
+            print("El archivo está listo para ser subido por GitHub Actions.")
         else:
             print("\nError al ensamblar el video final.")
 
 if __name__ == "__main__":
     # Obtener la URL desde las variables de entorno de GitHub Actions
-    # Si no recibe ninguna, usará la de por defecto.
     url_objetivo = os.environ.get("STREAM_URL", "https://es.stripchat.com/Girls_hot_2")
     asyncio.run(grabar_stream(url_objetivo))
