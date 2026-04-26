@@ -206,5 +206,9 @@ async def record_stream(profile_url):
                 print(f"[WARN] Could not delete temporary file {f}: {e}")
 
 if __name__ == "__main__":
-    target_url = os.environ.get("STREAM_URL", "https://es.stripchat.com/Girls_hot_2")
-    asyncio.run(record_stream(target_url))
+    target_url = os.environ.get("STREAM_URL")
+    
+    if not target_url:
+        print("[ERROR] No STREAM_URL provided. Exiting.")
+    else:
+        asyncio.run(record_stream(target_url))
