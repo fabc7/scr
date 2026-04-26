@@ -3,185 +3,208 @@ from playwright.async_api import async_playwright
 import subprocess
 import os
 import datetime
+import shutil
+import base64
 
-# Obtener la carpeta donde está guardado este script (la carpeta 'recorder')
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-async def grabar_stream(url_perfil):
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
+async def record_stream(profile_url):
+    if not shutil.which("ffmpeg"):
+        print("[ERROR] FFmpeg is not installed on the system.")
+        return
 
-        print(f"\nInyectando el 'hack' de MediaSource en el navegador...")
+    raw_files = {}
+    browser = None
 
-        # Aquí almacenaremos los archivos de video y audio temporalmente
-        archivos_crudos = {}
-        import base64
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 720}
+            )
+            page = await context.new_page()
 
-        async def python_append_chunk(buffer_id, mime_type, b64_data):
-            if buffer_id not in archivos_crudos:
-                # Determinar si es video o audio
-                ext = "mp4" if "video" in mime_type else "m4a"
-                nombre_tmp = os.path.join(SCRIPT_DIR, f"tmp_{buffer_id}.{ext}")
-                archivos_crudos[buffer_id] = {"file": open(nombre_tmp, "wb"), "nombre": nombre_tmp, "tipo": ext}
-                print(f"[+] Nuevo flujo detectado: {ext} (Mime: {mime_type[:30]}...)")
-            
-            try:
-                data = base64.b64decode(b64_data)
-                archivos_crudos[buffer_id]["file"].write(data)
-            except Exception as e:
-                pass
+            print("[INFO] Injecting MediaSource interceptor into the browser...")
 
-        await page.expose_function("python_append_chunk", python_append_chunk)
-
-        # Inyectamos el mismo código exacto que usa la extensión de Chrome
-        js_hook = """
-        const OriginalMediaSource = window.MediaSource;
-        window.MediaSource = class extends OriginalMediaSource {
-            addSourceBuffer(mimeType) {
-                const sourceBuffer = super.addSourceBuffer.apply(this, arguments);
-                const originalAppendBuffer = sourceBuffer.appendBuffer;
-                const bufferId = Math.random().toString(36).substring(7);
-                
-                sourceBuffer.appendBuffer = function(buffer) {
-                    if (buffer && (buffer.length || buffer.byteLength)) {
-                        try {
-                            const uint8 = new Uint8Array(buffer);
-                            let binary = '';
-                            const chunkSize = 8192;
-                            for (let i = 0; i < uint8.length; i += chunkSize) {
-                                binary += String.fromCharCode.apply(null, uint8.subarray(i, i + chunkSize));
-                            }
-                            const b64 = btoa(binary);
-                            window.python_append_chunk(bufferId, mimeType, b64);
-                        } catch (e) {}
-                    }
-                    return originalAppendBuffer.apply(this, arguments);
-                };
-                return sourceBuffer;
-            }
-        };
-        """
-        await page.add_init_script(js_hook)
-
-        print(f"Entrando a: {url_perfil} ...")
-        try:
-            await page.goto(url_perfil, wait_until="domcontentloaded", timeout=45000)
-            
-            try:
-                btn = page.locator("button:has-text('I Agree'), button:has-text('Estoy de acuerdo')")
-                if await btn.count() > 0:
-                    await btn.first.click(timeout=2000)
-            except Exception:
-                pass
-                
-            await page.mouse.wheel(0, 500)
-            
-            # Buscamos el botón de Play si es que no inició solo
-            try:
-                play_btn = page.locator(".video-player-play-button, button:has-text('Play')")
-                if await play_btn.count() > 0:
-                    await play_btn.first.click(timeout=2000)
-            except Exception:
-                pass
-
-            print(f"\n¡Grabando directamente desde la pantalla de forma continua!")
-            print(f"El bot grabará hasta llegar a 10 MB, o si el stream termina.")
-            
-            segundos_sin_datos = 0
-            tamano_anterior = 0
-            # Definimos el límite máximo en bytes (10 MB)
-            LIMITE_BYTES = 10 * 1024 * 1024 
-            
-            while True:
-                await asyncio.sleep(5) # Revisar cada 5 segundos
-                
-                # Calcular el peso total de todos los fragmentos temporales
-                tamano_actual = sum(os.path.getsize(info["nombre"]) for info in archivos_crudos.values() if os.path.exists(info["nombre"]))
-                
-                if tamano_actual > tamano_anterior:
-                    segundos_sin_datos = 0
-                    tamano_anterior = tamano_actual
-                else:
-                    segundos_sin_datos += 5
+            async def python_append_chunk(buffer_id, mime_type, b64_data):
+                if buffer_id not in raw_files:
+                    ext = "mp4" if "video" in mime_type else "m4a"
+                    tmp_name = os.path.join(SCRIPT_DIR, f"tmp_{buffer_id}.{ext}")
                     
-                # Mostrar progreso en MB
-                mb_descargados = tamano_actual / (1024 * 1024)
-                print(f"Grabando... Tamaño actual: {mb_descargados:.2f} MB / 10 MB", end="\r")
-
-                # ==========================================
-                # NUEVA REGLA: Si llega a 10 MB, se detiene
-                # ==========================================
-                if tamano_actual >= LIMITE_BYTES:
-                    print(f"\n\n[!] Límite de 10 MB alcanzado ({mb_descargados:.2f} MB). Finalizando grabación...")
-                    break
-                    
-                # Si pasa 30 segundos sin recibir datos de video nuevos
-                if segundos_sin_datos >= 30:
-                    print("\n\n[!] El flujo de video se ha detenido. Finalizando grabación...")
-                    break
-                    
-                # Verificar visualmente si la página indica que la modelo se fue
+                    try:
+                        raw_files[buffer_id] = {"file": open(tmp_name, "wb"), "name": tmp_name, "type": ext}
+                        print(f"[INFO] New stream detected: {ext} (Mime: {mime_type[:30]}...)")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to create temp file {tmp_name}: {e}")
+                        return
+                
                 try:
-                    offline_text = page.locator("text='Offline', text='is offline', .offline-screen")
-                    if await offline_text.count() > 0:
-                        print("\n\n[!] Se detectó la pantalla de Offline. Finalizando grabación...")
-                        break
+                    data = base64.b64decode(b64_data)
+                    raw_files[buffer_id]["file"].write(data)
+                except Exception as e:
+                    print(f"\n[WARN] Failed to decode or write chunk: {e}")
+
+            await page.expose_function("python_append_chunk", python_append_chunk)
+
+            js_hook = """
+            const OriginalMediaSource = window.MediaSource;
+            window.MediaSource = class extends OriginalMediaSource {
+                addSourceBuffer(mimeType) {
+                    const sourceBuffer = super.addSourceBuffer.apply(this, arguments);
+                    const originalAppendBuffer = sourceBuffer.appendBuffer;
+                    const bufferId = Math.random().toString(36).substring(7);
+                    
+                    sourceBuffer.appendBuffer = function(buffer) {
+                        if (buffer && (buffer.length || buffer.byteLength)) {
+                            try {
+                                const uint8 = new Uint8Array(buffer);
+                                let binary = '';
+                                const chunkSize = 8192;
+                                for (let i = 0; i < uint8.length; i += chunkSize) {
+                                    binary += String.fromCharCode.apply(null, uint8.subarray(i, i + chunkSize));
+                                }
+                                const b64 = btoa(binary);
+                                window.python_append_chunk(bufferId, mimeType, b64);
+                            } catch (e) {
+                                console.error("[JS Hook Error]", e);
+                            }
+                        }
+                        return originalAppendBuffer.apply(this, arguments);
+                    };
+                    return sourceBuffer;
+                }
+            };
+            """
+            await page.add_init_script(js_hook)
+
+            print(f"[INFO] Navigating to: {profile_url}")
+            
+            try:
+                await page.goto(profile_url, wait_until="domcontentloaded", timeout=45000)
+                
+                # Attempt to bypass age restrictions if present
+                try:
+                    await page.locator("button:has-text('I Agree'), button:has-text('Estoy de acuerdo')").first.click(timeout=3000)
+                except Exception:
+                    pass 
+                    
+                await page.mouse.wheel(0, 500)
+                
+                # Attempt to click play if autoplay is disabled
+                try:
+                    await page.locator(".video-player-play-button, button:has-text('Play')").first.click(timeout=3000)
                 except Exception:
                     pass
+
+                print("[INFO] Recording started. Target limit: 10 MB or stream end.")
                 
-        except Exception as e:
-            print(f"\nAviso: Error en navegación: {e}")
+                seconds_without_data = 0
+                previous_size = 0
+                MAX_BYTES = 10 * 1024 * 1024 
+                
+                while True:
+                    await asyncio.sleep(5)
+                    
+                    current_size = sum(
+                        os.path.getsize(info["name"]) 
+                        for info in raw_files.values() 
+                        if os.path.exists(info["name"])
+                    )
+                    
+                    if current_size > previous_size:
+                        seconds_without_data = 0
+                        previous_size = current_size
+                    else:
+                        seconds_without_data += 5
+                        
+                    downloaded_mb = current_size / (1024 * 1024)
+                    print(f"Status: Recording... Current size: {downloaded_mb:.2f} MB / 10.00 MB", end="\r")
 
-        await browser.close()
+                    if current_size >= MAX_BYTES:
+                        print(f"\n\n[INFO] Target size of 10 MB reached ({downloaded_mb:.2f} MB). Stopping recording.")
+                        break
+                        
+                    if seconds_without_data >= 30:
+                        if current_size == 0:
+                            print("\n\n[WARN] Stream never started or the model is currently offline (0 bytes captured).")
+                        else:
+                            print("\n\n[INFO] Video stream stopped receiving data. Stopping recording.")
+                        break
+                        
+                    try:
+                        if await page.locator("text='Offline', text='is offline', .offline-screen").count() > 0:
+                            print("\n\n[INFO] Offline screen detected. Stopping recording.")
+                            break
+                    except Exception:
+                        pass
+                    
+            except Exception as e:
+                print(f"\n[ERROR] Navigation or recording interrupted: {str(e)}")
 
-        # Cerramos los archivos
-        archivos_validos = []
-        for buf_id, info in archivos_crudos.items():
-            info["file"].close()
-            # Si el archivo tiene peso, lo guardamos para unir
-            if os.path.exists(info["nombre"]) and os.path.getsize(info["nombre"]) > 1000:
-                archivos_validos.append(info["nombre"])
+    finally:
+        # Guarantee browser closure
+        if browser:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+
+        # Guarantee safe closure and validation of raw files
+        valid_files = []
+        for buf_id, info in raw_files.items():
+            try:
+                info["file"].close()
+            except Exception:
+                pass
+            
+            if os.path.exists(info["name"]) and os.path.getsize(info["name"]) > 1000:
+                valid_files.append(info["name"])
             else:
-                try: os.remove(info["nombre"])
-                except: pass
+                try: 
+                    os.remove(info["name"])
+                except Exception: 
+                    pass
 
-        if not archivos_validos:
-            print("\nError: No se capturaron fragmentos de video. ¿La modelo está online?")
+        if not valid_files:
+            print("\n[WARN] No valid video chunks were captured. Aborting merge process.")
             return
 
-        print("\nEnsamblando el video y el audio con FFmpeg...")
+        print("\n[INFO] Merging video and audio streams using FFmpeg...")
         
-        # Generar nombre dinámico basado en la URL y la fecha
-        nombre_modelo = url_perfil.rstrip('/').split('/')[-1]
+        model_name = profile_url.rstrip('/').split('/')[-1]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        nombre_video = f"{nombre_modelo}_{timestamp}.mp4"
+        video_filename = f"{model_name}_{timestamp}.mp4"
+        final_output_path = os.path.join(SCRIPT_DIR, video_filename)
         
-        # Unimos el video y el audio en la carpeta recorder
-        archivo_final = os.path.join(SCRIPT_DIR, nombre_video)
-        comando_ffmpeg = ['ffmpeg', '-y']
-        for f in archivos_validos:
-            comando_ffmpeg.extend(['-i', f])
+        ffmpeg_cmd = ['ffmpeg', '-y']
+        for f in valid_files:
+            ffmpeg_cmd.extend(['-i', f])
+        ffmpeg_cmd.extend(['-c', 'copy', final_output_path])
         
-        comando_ffmpeg.extend(['-c', 'copy', archivo_final])
-        
-        subprocess.run(comando_ffmpeg, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                print(f"\n[ERROR] FFmpeg failed to merge files. STDERR details:\n{result.stderr}")
+            elif os.path.exists(final_output_path):
+                final_size_mb = os.path.getsize(final_output_path) / (1024 * 1024)
+                print(f"\n[SUCCESS] File successfully saved as {final_output_path} ({final_size_mb:.2f} MB).")
+            else:
+                print("\n[ERROR] FFmpeg execution completed, but the output file is missing.")
+                
+        except Exception as e:
+             print(f"\n[ERROR] Exception occurred while running FFmpeg: {e}")
 
-        # Limpiamos los archivos temporales
-        for f in archivos_validos:
-            try: os.remove(f)
-            except: pass
-
-        if os.path.exists(archivo_final):
-            print(f"\n¡ÉXITO! Archivo guardado como {archivo_final} ({os.path.getsize(archivo_final)} bytes).")
-            print("El archivo está listo para ser subido por GitHub Actions.")
-        else:
-            print("\nError al ensamblar el video final.")
+        # Guarantee cleanup of temporary chunks
+        print("[INFO] Cleaning up temporary chunk files...")
+        for f in valid_files:
+            try: 
+                if os.path.exists(f):
+                    os.remove(f)
+            except Exception as e: 
+                print(f"[WARN] Could not delete temporary file {f}: {e}")
 
 if __name__ == "__main__":
-    # Obtener la URL desde las variables de entorno de GitHub Actions
-    url_objetivo = os.environ.get("STREAM_URL", "https://es.stripchat.com/Girls_hot_2")
-    asyncio.run(grabar_stream(url_objetivo))
+    target_url = os.environ.get("STREAM_URL", "https://es.stripchat.com/Girls_hot_2")
+    asyncio.run(record_stream(target_url))
