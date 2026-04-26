@@ -8,7 +8,6 @@ CLIENT_ID = os.environ.get('YOUTUBE_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('YOUTUBE_CLIENT_SECRET')
 REFRESH_TOKEN = os.environ.get('YOUTUBE_REFRESH_TOKEN')
 STREAM_URL = os.environ.get('STREAM_URL', 'Unknown Stream')
-VIDEO_TITLE = os.environ.get('VIDEO_TITLE', 'Auto Upload')
 
 def get_authenticated_service():
     creds = Credentials(
@@ -21,34 +20,35 @@ def get_authenticated_service():
     return build('youtube', 'v3', credentials=creds)
 
 def upload_latest_video():
-    # Busca recursivamente cualquier archivo .mp4 en el repositorio
     files = glob.glob('**/*.mp4', recursive=True)
     if not files:
         print("[ERROR] No MP4 files found to upload.")
         return
 
-    # Toma el archivo modificado más recientemente
     files.sort(key=os.path.getmtime)
     video_file = files[-1]
     print(f"[INFO] Video found for upload: {video_file}")
 
+    base_name = os.path.basename(video_file)
+    name_without_ext = os.path.splitext(base_name)[0]
+    auto_title = name_without_ext.replace('_', ' ')
+    
     try:
         youtube = get_authenticated_service()
         body = {
             'snippet': {
-                'title': VIDEO_TITLE,
+                'title': auto_title, # Aquí inyectamos el título autogenerado
                 'description': f'Auto re-upload from {STREAM_URL}',
                 'tags': ['stream', 'vod'],
-                'categoryId': '20' # 20 = Gaming
+                'categoryId': '20' 
             },
             'status': {
-                'privacyStatus': 'private', # Se sube en privado por defecto
+                'privacyStatus': 'private',
                 'selfDeclaredMadeForKids': False
             }
         }
         
-        print(f"[INFO] Uploading video to YouTube as '{VIDEO_TITLE}'...")
-        # chunksize establecido en ~5MB para no sobrecargar la RAM del servidor
+        print(f"[INFO] Uploading video to YouTube as '{auto_title}'...")
         media = MediaFileUpload(video_file, chunksize=1024*1024*5, resumable=True) 
         request = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
         
