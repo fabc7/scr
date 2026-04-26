@@ -44,5 +44,5 @@ jobs:
         if: always() 
         with:
           name: Stream-Grabado
-          path: "*.mp4" # Busca cualquier mp4 en la carpeta principal
-          retention-days: 7 # El video se borrará de los servidores de GitHub en 7 días
+          path: "**/*.mp4" 
+          retention-days: 7
