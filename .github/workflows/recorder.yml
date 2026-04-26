@@ -36,7 +36,7 @@ jobs:
       - name: 🎥 Ejecutar el Script de Grabación
         env:
           STREAM_URL: ${{ github.event.inputs.stream_url }}
-        run: python recorder.py
+        run: python recorder/recorder.py
 
       - name: 💾 Subir el Video Resultante
         uses: actions/upload-artifact@v4
