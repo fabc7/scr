@@ -1,41 +1,48 @@
-name: Recorder Stream
+name: Grabar Stream
 
 on:
   workflow_dispatch:
     inputs:
-      url:
-        description: "URL del stream"
+      stream_url:
+        description: 'URL del perfil a grabar'
         required: true
+        default: 'https://es.stripchat.com/Girls_hot_2'
 
 jobs:
-  record:
+  record-stream:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-
+    
     steps:
-      - name: Checkout repo
+      - name: 📥 Clonar el repositorio
         uses: actions/checkout@v4
 
-      - name: Instalar Python
+      - name: 🐍 Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.10'
 
-      - name: Instalar dependencias
+      - name: 🎬 Instalar dependencias del sistema (FFmpeg)
         run: |
-          pip install -r requirements.txt
-          playwright install chromium
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
-      - name: Instalar FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: 📦 Instalar dependencias de Python
+        run: |
+          python -m pip install --upgrade pip
+          pip install playwright
+          # Instalar Chromium y sus dependencias de sistema operativo
+          playwright install chromium --with-deps
 
-      - name: Ejecutar script
+      - name: 🎥 Ejecutar el Script de Grabación
         env:
-          STREAM_URL: ${{ github.event.inputs.url }}
-        run: python recorder/grabar.py
+          STREAM_URL: ${{ github.event.inputs.stream_url }}
+        run: python recorder.py
 
-      - name: Subir video como artifact
+      - name: 💾 Subir el Video Resultante
         uses: actions/upload-artifact@v4
+        # Esto se ejecuta siempre, incluso si la grabación terminó por timeout o error
+        if: always() 
         with:
-          name: video
-          path: recorder/*.mp4
+          name: Stream-Grabado
+          path: "*.mp4" # Busca cualquier mp4 en la carpeta principal
+          retention-days: 7 # El video se borrará de los servidores de GitHub en 7 días
