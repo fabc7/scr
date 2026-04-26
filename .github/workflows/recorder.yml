@@ -1,48 +1,43 @@
-name: Grabar Stream
+name: Record Stream
 
 on:
   workflow_dispatch:
     inputs:
       stream_url:
-        description: 'URL del perfil a grabar'
+        description: 'Profile URL to record'
         required: true
-        default: 'https://es.stripchat.com/Girls_hot_2'
 
 jobs:
   record-stream:
     runs-on: ubuntu-latest
     
     steps:
-      - name: 📥 Clonar el repositorio
+      - name: Clone repository
         uses: actions/checkout@v4
 
-      - name: 🐍 Configurar Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: 🎬 Instalar dependencias del sistema (FFmpeg)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
 
-      - name: 📦 Instalar dependencias de Python
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install playwright
-          # Instalar Chromium y sus dependencias de sistema operativo
           playwright install chromium --with-deps
 
-      - name: 🎥 Ejecutar el Script de Grabación
+      - name: Run recording script
         env:
           STREAM_URL: ${{ github.event.inputs.stream_url }}
         run: python recorder/recorder.py
 
-      - name: 💾 Subir el Video Resultante
+      - name: Upload recorded video
         uses: actions/upload-artifact@v4
-        # Esto se ejecuta siempre, incluso si la grabación terminó por timeout o error
-        if: always() 
+        if: always()
         with:
-          name: Stream-Grabado
-          path: "**/*.mp4" 
+          name: Recorded-Stream
+          path: "**/*.mp4"
           retention-days: 7
