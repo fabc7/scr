@@ -183,6 +183,7 @@ async def record_stream(profile_url):
         ffmpeg_cmd.extend([
             '-c:v', 'copy', '-c:a', 'aac',
             '-map', '0:v:0', '-map', '1:a:0',
+            '-movflags', '+faststart',
             final_output_path
         ])
         
