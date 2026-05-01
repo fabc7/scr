@@ -180,7 +180,11 @@ async def record_stream(profile_url):
         ffmpeg_cmd = ['ffmpeg', '-y']
         for f in valid_files:
             ffmpeg_cmd.extend(['-i', f])
-        ffmpeg_cmd.extend(['-c', 'copy', final_output_path])
+        ffmpeg_cmd.extend([
+            '-c:v', 'copy', '-c:a', 'aac',
+            '-map', '0:v:0', '-map', '1:a:0',
+            final_output_path
+        ])
         
         try:
             result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
