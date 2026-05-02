@@ -102,7 +102,7 @@ async def record_stream(profile_url):
                 seconds_without_data = 0
                 previous_size = 0
                 # MAX_BYTES = 5 * 1024 * 1024 * 1024
-                # MAX_BYTES = 10 * 1024 * 1024
+                MAX_BYTES = 20 * 1024 * 1024
                 
                 while True:
                     await asyncio.sleep(5)
