@@ -182,8 +182,8 @@ async def record_stream(profile_url):
         for f in valid_files:
             ffmpeg_cmd.extend(['-i', f])
         ffmpeg_cmd.extend([
-            '-c:v', 'copy', '-c:a', 'aac',
-            '-map', '0:v:0', '-map', '1:a:0',
+            '-c:v', 'copy',
+            '-c:a', 'aac',
             '-movflags', '+faststart',
             final_output_path
         ])
