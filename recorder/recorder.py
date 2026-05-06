@@ -101,7 +101,7 @@ async def record_stream(profile_url):
                 
                 seconds_without_data = 0
                 previous_size = 0
-                MAX_BYTES = 5 * 1024 * 1024 * 1024
+                MAX_BYTES = 15 * 1024 * 1024 * 1024
                 # MAX_BYTES = 20 * 1024 * 1024
                 
                 while True:
@@ -120,10 +120,10 @@ async def record_stream(profile_url):
                         seconds_without_data += 5
                         
                     downloaded_mb = current_size / (1024 * 1024)
-                    print(f"Status: Recording... Current size: {downloaded_mb:.2f} MB / 10.00 MB", end="\r")
+                    print(f"Status: Recording... Current size: {downloaded_mb:.2f} MB 15000 MB", end="\r")
 
                     if current_size >= MAX_BYTES:
-                        print(f"\n\n[INFO] Target size of 10 MB reached ({downloaded_mb:.2f} MB). Stopping recording.")
+                        print(f"\n\n[INFO] Target size size 15000 MB reached ({downloaded_mb:.2f} MB). Stopping recording.")
                         break
                         
                     if seconds_without_data >= 30:
