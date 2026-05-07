@@ -33,15 +33,29 @@ async def record_stream(profile_url):
                     tmp_name = os.path.join(SCRIPT_DIR, f"tmp_{buffer_id}.{ext}")
                     
                     try:
-                        raw_files[buffer_id] = {"file": open(tmp_name, "wb"), "name": tmp_name, "type": ext}
+                        # raw_files[buffer_id] = {"file": open(tmp_name, "wb"), "name": tmp_name, "type": ext}
+                        raw_files[buffer_id] = {
+                            "file": open(tmp_name, "wb"),
+                            "name": tmp_name,
+                            "type": ext,
+                            "flush_counter": 0
+                        }
                         print(f"[INFO] New stream detected: {ext} (Mime: {mime_type[:30]}...)")
                     except Exception as e:
                         print(f"[ERROR] Failed to create temp file {tmp_name}: {e}")
                         return
                 
                 try:
+                    # data = base64.b64decode(b64_data)
+                    # raw_files[buffer_id]["file"].write(data)
                     data = base64.b64decode(b64_data)
-                    raw_files[buffer_id]["file"].write(data)
+                    f = raw_files[buffer_id]["file"]
+                    f.write(data)
+                    raw_files[buffer_id]["flush_counter"] += len(data)
+                    if raw_files[buffer_id]["flush_counter"] >= 5 * 1024 * 1024:
+                        f.flush()
+                        raw_files[buffer_id]["flush_counter"] = 0
+                        
                 except Exception as e:
                     print(f"\n[WARN] Failed to decode or write chunk: {e}")
 
@@ -101,8 +115,8 @@ async def record_stream(profile_url):
                 
                 seconds_without_data = 0
                 previous_size = 0
-                MAX_BYTES = 15 * 1024 * 1024 * 1024
-                # MAX_BYTES = 20 * 1024 * 1024
+                # MAX_BYTES = 15 * 1024 * 1024 * 1024
+                MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
                 
                 while True:
                     await asyncio.sleep(5)
@@ -155,6 +169,7 @@ async def record_stream(profile_url):
         valid_files = []
         for buf_id, info in raw_files.items():
             try:
+                info["file"].flush()
                 info["file"].close()
             except Exception:
                 pass
@@ -178,24 +193,17 @@ async def record_stream(profile_url):
         video_filename = f"{model_name}_{timestamp}.mkv"
         final_output_path = os.path.join(SCRIPT_DIR, video_filename)
 
-        valid_files.sort(key=os.path.getsize, reverse=True)
-        ffmpeg_cmd = ['ffmpeg', '-y']
-        for f in valid_files[:2]:
-            ffmpeg_cmd.extend(['-i', f])
+        largest_file = max(valid_files, key=os.path.getsize)
+
+        print(f"[INFO] Using stream file: {largest_file}")
         
-        ffmpeg_cmd.extend([
-            '-map', '0:v:0',
-            '-map', '1:a:0',
-        
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-crf', '23',
-        
-            '-c:a', 'aac',
-            '-b:a', '192k',
-        
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-y',
+            '-i', largest_file,
+            '-c', 'copy',
             final_output_path
-        ])
+        ]
         
         try:
             result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
