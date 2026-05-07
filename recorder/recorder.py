@@ -175,16 +175,17 @@ async def record_stream(profile_url):
         
         model_name = profile_url.rstrip('/').split('/')[-1]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        video_filename = f"{model_name}_{timestamp}.mp4"
+        video_filename = f"{model_name}_{timestamp}.mkv"
         final_output_path = os.path.join(SCRIPT_DIR, video_filename)
         
         ffmpeg_cmd = ['ffmpeg', '-y']
         for f in valid_files:
             ffmpeg_cmd.extend(['-i', f])
         ffmpeg_cmd.extend([
-            '-c:v', 'copy',
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-crf', '23',
             '-c:a', 'aac',
-            '-movflags', '+faststart',
             final_output_path
         ])
         
