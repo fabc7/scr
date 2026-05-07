@@ -111,12 +111,12 @@ async def record_stream(profile_url):
                 except Exception:
                     pass
 
-                print("[INFO] Recording started. Target limit: 5 GB or stream end.")
+                print("[INFO] Recording started. Target limit: 15 GB or stream end.")
                 
                 seconds_without_data = 0
                 previous_size = 0
-                # MAX_BYTES = 15 * 1024 * 1024 * 1024
-                MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
+                MAX_BYTES = 15 * 1024 * 1024 * 1024 # 15 GB
+                # MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
                 
                 while True:
                     await asyncio.sleep(5)
