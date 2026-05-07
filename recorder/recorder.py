@@ -179,7 +179,7 @@ async def record_stream(profile_url):
         final_output_path = os.path.join(SCRIPT_DIR, video_filename)
 
         valid_files.sort(key=os.path.getsize, reverse=True)
-        
+        ffmpeg_cmd = ['ffmpeg', '-y']
         for f in valid_files[:2]:
             ffmpeg_cmd.extend(['-i', f])
         
