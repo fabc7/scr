@@ -20,9 +20,9 @@ def get_authenticated_service():
     return build('youtube', 'v3', credentials=creds)
 
 def upload_latest_video():
-    files = glob.glob('**/*.mp4', recursive=True)
+    files = glob.glob('**/*.mkv', recursive=True)
     if not files:
-        print("[ERROR] No MP4 files found to upload.")
+        print("[ERROR] No MKV files found to upload.")
         return
 
     files.sort(key=os.path.getmtime)
