@@ -60,6 +60,18 @@ async def record_stream(profile_url):
 
             await page.expose_function("python_append_chunk", python_append_chunk)
 
+            # ========== CAPTURAR LOGS DE CONSOLA DEL NAVEGADOR ==========
+            console_logs = []
+            
+            def handle_console_msg(msg):
+                log_entry = f"[{msg.type.upper()}] {msg.text}"
+                console_logs.append(log_entry)
+                if "1080p" in msg.text.lower() or "hls" in msg.text.lower() or "nivel" in msg.text.lower():
+                    print(f"[BROWSER_CONSOLE] {log_entry}")
+            
+            page.on("console", handle_console_msg)
+            # ========== FIN CAPTURA DE LOGS ==========
+
             js_hook = """
             const OriginalMediaSource = window.MediaSource;
             window.MediaSource = class extends OriginalMediaSource {
@@ -111,40 +123,89 @@ async def record_stream(profile_url):
                     pass
 
                 # ========== INYECTAR FUERZA 1080P EN TIEMPO DE EJECUCIÓN ==========
-                await asyncio.sleep(2)  # Esperar a que el player cargue
+                await asyncio.sleep(3)  # Esperar a que el player cargue
                 
                 force1080p_runtime = """
                 (function() {
                   console.log('🎬 Fuerza 1080p en tiempo de ejecución...');
+                  console.log('window.hls disponible:', !!window.hls);
+                  console.log('window.HlsPlayer disponible:', !!window.HlsPlayer);
                   
+                  // Buscar instancias de HLS en variables globales
+                  let hlsInstance = null;
+                  
+                  // Intentar múltiples ubicaciones
+                  if (window.hls) {
+                    hlsInstance = window.hls;
+                    console.log('✅ Encontrado window.hls');
+                  } else if (window.player && window.player.hls) {
+                    hlsInstance = window.player.hls;
+                    console.log('✅ Encontrado window.player.hls');
+                  } else if (window.videojs && window.videojs.getPlayer) {
+                    const player = window.videojs.getPlayer('video');
+                    if (player && player.hls) {
+                      hlsInstance = player.hls;
+                      console.log('✅ Encontrado en videojs player');
+                    }
+                  }
+                  
+                  // Interceptar manifestos m3u8
+                  const originalFetch = window.fetch;
+                  window.fetch = function(resource, config) {
+                    let url = typeof resource === 'string' ? resource : resource.url;
+                    
+                    if (url && url.includes('.m3u8')) {
+                      console.log('📡 Manifest interceptado:', url);
+                      // Cambiar cualquier calidad a 1080p si es posible
+                      if (url.includes('_720p.m3u8')) {
+                        url = url.replace('_720p.m3u8', '_1080p.m3u8');
+                        console.log('📡 Redirigido a 1080p:', url);
+                      }
+                    }
+                    
+                    return originalFetch(url, config);
+                  };
+                  window.fetch_intercepted = true;
+                  console.log('✅ Fetch interceptado');
+                  
+                  // Intentar forzar 1080p si HLS está disponible
                   async function force() {
-                    // Esperar a que hls esté disponible
-                    for (let i = 0; i < 30; i++) {
-                      if (window.hls && window.hls.levels && window.hls.levels.length > 0) {
-                        const levels = window.hls.levels;
-                        console.log('Niveles disponibles:', levels.map(l => l.height + 'p'));
+                    for (let i = 0; i < 60; i++) {
+                      if (hlsInstance && hlsInstance.levels && hlsInstance.levels.length > 0) {
+                        const levels = hlsInstance.levels;
+                        console.log('📊 Niveles encontrados:', levels.map(l => ({ height: l.height, name: l.name })));
                         
-                        const level1080p = levels.findIndex(l => l.height === 1080);
+                        // Buscar 1080p
+                        const level1080p = levels.findIndex(l => l.height === 1080 || (l.name && l.name.includes('1080')));
                         if (level1080p !== -1) {
-                          window.hls.currentLevel = level1080p;
-                          console.log('✅ 1080p APLICADO');
+                          hlsInstance.currentLevel = level1080p;
+                          console.log('✅ 1080p APLICADO - currentLevel:', level1080p);
                           return;
                         }
+                        
+                        // Si no hay 1080p, seleccionar el más alto disponible
+                        const maxLevel = levels.length - 1;
+                        hlsInstance.currentLevel = maxLevel;
+                        console.log('⚠️ 1080p no disponible, aplicado máximo:', levels[maxLevel].height, 'p');
+                        return;
                       }
                       await new Promise(r => setTimeout(r, 500));
                     }
-                    console.log('⚠️ 1080p no disponible, niveles:', 
-                      window.hls?.levels?.map(l => l.height + 'p') || 'No detectados');
+                    console.log('❌ HLS no disponible después de 30 segundos');
                   }
+                  
                   force();
                 })();
                 """
                 
                 try:
-                    await page.evaluate(force1080p_runtime)
+                    result = await page.evaluate(force1080p_runtime)
                     print("[INFO] 1080p quality injection attempted")
                 except Exception as e:
                     print(f"[WARN] Could not inject 1080p script: {e}")
+                
+                # Esperar a que la inyección haga efecto
+                await asyncio.sleep(2)
                 # ========== FIN ==========
 
                 print("[INFO] Recording started. Target limit: 15 GB or stream end.")
