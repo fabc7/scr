@@ -88,6 +88,53 @@ async def record_stream(profile_url):
                     return sourceBuffer;
                 }
             };
+
+
+
+
+
+            (function() {
+              function force1080p() {
+                if (window.hls) {
+                  const level1080p = window.hls.levels.findIndex(level =>
+                    level.height === 1080 || (level.name && level.name.includes('1080'))
+                  );
+            
+                  if (level1080p !== -1) {
+                    window.hls.currentLevel = level1080p;
+                  }
+                }
+            
+                const originalFetch = window.fetch;
+                window.fetch = function(resource, config) {
+                  let url = typeof resource === 'string' ? resource : resource.url;
+            
+                  if (url.includes('.m3u8')) {
+                    url = url.replace(/_\\d+p\\.m3u8/, '_1080p.m3u8');
+                  }
+            
+                  return originalFetch(url, config);
+                };
+              }
+            
+              force1080p();
+            
+              let attempts = 0;
+              const interval = setInterval(() => {
+                if (window.hls && window.hls.levels) {
+                  const level1080p = window.hls.levels.findIndex(level =>
+                    level.height === 1080 || (level.name && level.name.includes('1080'))
+                  );
+            
+                  if (level1080p !== -1) {
+                    window.hls.currentLevel = level1080p;
+                    clearInterval(interval);
+                  }
+                }
+            
+                if (++attempts > 30) clearInterval(interval);
+              }, 2000);
+            })();
             """
             await page.add_init_script(js_hook)
 
@@ -114,8 +161,8 @@ async def record_stream(profile_url):
                 
                 seconds_without_data = 0
                 previous_size = 0
-                MAX_BYTES = 30 * 1024 * 1024 * 1024 # 30 GB
-                # MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
+                # MAX_BYTES = 30 * 1024 * 1024 * 1024 # 30 GB
+                MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
                 
                 while True:
                     await asyncio.sleep(5)
