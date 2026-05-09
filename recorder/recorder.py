@@ -88,43 +88,6 @@ async def record_stream(profile_url):
                     return sourceBuffer;
                 }
             };
-
-
-
-
-
-            (function() {
-                console.log('🎬 Iniciando script de fuerza 1080p...');
-                
-                function force1080p() {
-                    if (window.hls) {
-                        const level1080p = window.hls.levels.findIndex(level => 
-                            level.height === 1080 || level.name.includes('1080')
-                        );
-                        if (level1080p !== -1) {
-                            window.hls.currentLevel = level1080p;
-                            console.log('✅ 1080p seleccionado');
-                        }
-                    }
-                }
-                
-                force1080p();
-                
-                let intentos = 0;
-                const intervalo = setInterval(() => {
-                    if (window.hls && window.hls.levels) {
-                        const level1080p = window.hls.levels.findIndex(level => 
-                            level.height === 1080 || level.name.includes('1080')
-                        );
-                        if (level1080p !== -1 && window.hls.currentLevel !== level1080p) {
-                            window.hls.currentLevel = level1080p;
-                            clearInterval(intervalo);
-                        }
-                    }
-                    intentos++;
-                    if (intentos > 30) clearInterval(intervalo);
-                }, 2000);
-            })();
             """
             await page.add_init_script(js_hook)
 
@@ -146,6 +109,43 @@ async def record_stream(profile_url):
                     await page.locator(".video-player-play-button, button:has-text('Play')").first.click(timeout=3000)
                 except Exception:
                     pass
+
+                # ========== INYECTAR FUERZA 1080P EN TIEMPO DE EJECUCIÓN ==========
+                await asyncio.sleep(2)  # Esperar a que el player cargue
+                
+                force1080p_runtime = """
+                (function() {
+                  console.log('🎬 Fuerza 1080p en tiempo de ejecución...');
+                  
+                  async function force() {
+                    // Esperar a que hls esté disponible
+                    for (let i = 0; i < 30; i++) {
+                      if (window.hls && window.hls.levels && window.hls.levels.length > 0) {
+                        const levels = window.hls.levels;
+                        console.log('Niveles disponibles:', levels.map(l => l.height + 'p'));
+                        
+                        const level1080p = levels.findIndex(l => l.height === 1080);
+                        if (level1080p !== -1) {
+                          window.hls.currentLevel = level1080p;
+                          console.log('✅ 1080p APLICADO');
+                          return;
+                        }
+                      }
+                      await new Promise(r => setTimeout(r, 500));
+                    }
+                    console.log('⚠️ 1080p no disponible, niveles:', 
+                      window.hls?.levels?.map(l => l.height + 'p') || 'No detectados');
+                  }
+                  force();
+                })();
+                """
+                
+                try:
+                    await page.evaluate(force1080p_runtime)
+                    print("[INFO] 1080p quality injection attempted")
+                except Exception as e:
+                    print(f"[WARN] Could not inject 1080p script: {e}")
+                # ========== FIN ==========
 
                 print("[INFO] Recording started. Target limit: 15 GB or stream end.")
                 
