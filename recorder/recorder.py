@@ -149,24 +149,31 @@ async def record_stream(profile_url):
                     }
                   }
                   
-                  // Interceptar manifestos m3u8
+                  // Interceptar manifestos m3u8 Y segmentos individuales
                   const originalFetch = window.fetch;
                   window.fetch = function(resource, config) {
                     let url = typeof resource === 'string' ? resource : resource.url;
                     
-                    if (url && url.includes('.m3u8')) {
-                      console.log('📡 Manifest interceptado:', url);
-                      // Cambiar cualquier calidad a 1080p si es posible
+                    if (url) {
+                      // Cambiar manifests 720p -> 1080p
                       if (url.includes('_720p.m3u8')) {
-                        url = url.replace('_720p.m3u8', '_1080p.m3u8');
-                        console.log('📡 Redirigido a 1080p:', url);
+                        const newUrl = url.replace('_720p.m3u8', '_1080p.m3u8');
+                        console.log('📡 Manifest 720p -> 1080p:', url.substring(url.length - 50));
+                        url = newUrl;
+                      }
+                      
+                      // Cambiar segmentos individuales 720p -> 1080p (.ts, .mp4, etc)
+                      if (url.includes('_720p') && (url.includes('.ts') || url.includes('.m4s') || url.includes('.mp4'))) {
+                        const newUrl = url.replace('_720p', '_1080p');
+                        console.log('📹 Segmento 720p -> 1080p interceptado');
+                        url = newUrl;
                       }
                     }
                     
                     return originalFetch(url, config);
                   };
                   window.fetch_intercepted = true;
-                  console.log('✅ Fetch interceptado');
+                  console.log('✅ Fetch interceptado para manifests y segmentos');
                   
                   // Intentar forzar 1080p si HLS está disponible
                   async function force() {
