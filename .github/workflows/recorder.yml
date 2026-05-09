@@ -54,11 +54,11 @@ jobs:
           STREAM_URL: ${{ github.event.inputs.stream_url }}
         run: python recorder/recorder.py
 
-      - name: Upload Video to YouTube
-        if: success() 
-        env:
-          STREAM_URL: ${{ github.event.inputs.stream_url }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: python recorder/upload.py
+      #- name: Upload Video to YouTube
+        #if: success() 
+        #env:
+          #STREAM_URL: ${{ github.event.inputs.stream_url }}
+          #YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          #YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          #YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        #run: python recorder/upload.py
