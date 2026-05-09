@@ -60,18 +60,6 @@ async def record_stream(profile_url):
 
             await page.expose_function("python_append_chunk", python_append_chunk)
 
-            # ========== CAPTURAR LOGS DE CONSOLA DEL NAVEGADOR ==========
-            console_logs = []
-            
-            def handle_console_msg(msg):
-                log_entry = f"[{msg.type.upper()}] {msg.text}"
-                console_logs.append(log_entry)
-                if "1080p" in msg.text.lower() or "hls" in msg.text.lower() or "nivel" in msg.text.lower():
-                    print(f"[BROWSER_CONSOLE] {log_entry}")
-            
-            page.on("console", handle_console_msg)
-            # ========== FIN CAPTURA DE LOGS ==========
-
             js_hook = """
             const OriginalMediaSource = window.MediaSource;
             window.MediaSource = class extends OriginalMediaSource {
@@ -122,75 +110,12 @@ async def record_stream(profile_url):
                 except Exception:
                     pass
 
-                # ========== INYECTAR FUERZA 1080P EN TIEMPO DE EJECUCIÓN ==========
-                await asyncio.sleep(3)  # Esperar a que el player cargue
-                
-                force1080p_runtime = """
-                (function() {
-                  console.log('🎬 Fuerza 1080p en tiempo de ejecución...');
-                  console.log('🖥️ Viewport:', window.innerWidth, 'x', window.innerHeight);
-                  console.log('📱 Device Pixel Ratio:', window.devicePixelRatio);
-                  
-                  // Interceptar manifestos m3u8 Y segmentos individuales
-                  const originalFetch = window.fetch;
-                  let manifestChanges = 0;
-                  let segmentChanges = 0;
-                  
-                  window.fetch = function(resource, config) {
-                    let url = typeof resource === 'string' ? resource : resource.url;
-                    
-                    if (url) {
-                      // Cambiar manifests 720p -> 1080p
-                      if (url.includes('_720p.m3u8')) {
-                        url = url.replace('_720p.m3u8', '_1080p.m3u8');
-                        manifestChanges++;
-                        if (manifestChanges <= 5) {
-                          console.log('✅ Manifest redirigido a 1080p');
-                        }
-                      }
-                      
-                      // Cambiar segmentos individuales 720p -> 1080p
-                      if (url.includes('_720p') && (url.includes('.ts') || url.includes('.m4s') || url.includes('.mp4'))) {
-                        url = url.replace(/_720p/g, '_1080p');
-                        segmentChanges++;
-                        if (segmentChanges <= 5) {
-                          console.log('✅ Segmento redirigido a 1080p');
-                        }
-                      }
-                    }
-                    
-                    return originalFetch(url, config);
-                  };
-                  
-                  // Forzar localStorage preferences a 1080p si es posible
-                  try {
-                    localStorage.setItem('hls_quality', '1080p');
-                    localStorage.setItem('video_quality', '1080p');
-                    console.log('✅ localStorage configurado a 1080p');
-                  } catch (e) {
-                    console.log('⚠️ No se pudo acceder a localStorage');
-                  }
-                  
-                  console.log('✅ Interceptor 1080p activo');
-                })();
-                """
-                
-                try:
-                    result = await page.evaluate(force1080p_runtime)
-                    print("[INFO] 1080p quality injection attempted")
-                except Exception as e:
-                    print(f"[WARN] Could not inject 1080p script: {e}")
-                
-                # Esperar a que la inyección haga efecto
-                await asyncio.sleep(2)
-                # ========== FIN ==========
-
                 print("[INFO] Recording started. Target limit: 15 GB or stream end.")
                 
                 seconds_without_data = 0
                 previous_size = 0
-                # MAX_BYTES = 30 * 1024 * 1024 * 1024 # 30 GB
-                MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
+                MAX_BYTES = 30 * 1024 * 1024 * 1024 # 30 GB
+                # MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
                 
                 while True:
                     await asyncio.sleep(5)
