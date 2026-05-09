@@ -21,7 +21,7 @@ async def record_stream(profile_url):
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 720}
+                viewport={"width": 1920, "height": 1080}
             )
             page = await context.new_page()
 
@@ -128,80 +128,50 @@ async def record_stream(profile_url):
                 force1080p_runtime = """
                 (function() {
                   console.log('🎬 Fuerza 1080p en tiempo de ejecución...');
-                  console.log('window.hls disponible:', !!window.hls);
-                  console.log('window.HlsPlayer disponible:', !!window.HlsPlayer);
-                  
-                  // Buscar instancias de HLS en variables globales
-                  let hlsInstance = null;
-                  
-                  // Intentar múltiples ubicaciones
-                  if (window.hls) {
-                    hlsInstance = window.hls;
-                    console.log('✅ Encontrado window.hls');
-                  } else if (window.player && window.player.hls) {
-                    hlsInstance = window.player.hls;
-                    console.log('✅ Encontrado window.player.hls');
-                  } else if (window.videojs && window.videojs.getPlayer) {
-                    const player = window.videojs.getPlayer('video');
-                    if (player && player.hls) {
-                      hlsInstance = player.hls;
-                      console.log('✅ Encontrado en videojs player');
-                    }
-                  }
+                  console.log('🖥️ Viewport:', window.innerWidth, 'x', window.innerHeight);
+                  console.log('📱 Device Pixel Ratio:', window.devicePixelRatio);
                   
                   // Interceptar manifestos m3u8 Y segmentos individuales
                   const originalFetch = window.fetch;
+                  let manifestChanges = 0;
+                  let segmentChanges = 0;
+                  
                   window.fetch = function(resource, config) {
                     let url = typeof resource === 'string' ? resource : resource.url;
                     
                     if (url) {
                       // Cambiar manifests 720p -> 1080p
                       if (url.includes('_720p.m3u8')) {
-                        const newUrl = url.replace('_720p.m3u8', '_1080p.m3u8');
-                        console.log('📡 Manifest 720p -> 1080p:', url.substring(url.length - 50));
-                        url = newUrl;
+                        url = url.replace('_720p.m3u8', '_1080p.m3u8');
+                        manifestChanges++;
+                        if (manifestChanges <= 5) {
+                          console.log('✅ Manifest redirigido a 1080p');
+                        }
                       }
                       
-                      // Cambiar segmentos individuales 720p -> 1080p (.ts, .mp4, etc)
+                      // Cambiar segmentos individuales 720p -> 1080p
                       if (url.includes('_720p') && (url.includes('.ts') || url.includes('.m4s') || url.includes('.mp4'))) {
-                        const newUrl = url.replace('_720p', '_1080p');
-                        console.log('📹 Segmento 720p -> 1080p interceptado');
-                        url = newUrl;
+                        url = url.replace(/_720p/g, '_1080p');
+                        segmentChanges++;
+                        if (segmentChanges <= 5) {
+                          console.log('✅ Segmento redirigido a 1080p');
+                        }
                       }
                     }
                     
                     return originalFetch(url, config);
                   };
-                  window.fetch_intercepted = true;
-                  console.log('✅ Fetch interceptado para manifests y segmentos');
                   
-                  // Intentar forzar 1080p si HLS está disponible
-                  async function force() {
-                    for (let i = 0; i < 60; i++) {
-                      if (hlsInstance && hlsInstance.levels && hlsInstance.levels.length > 0) {
-                        const levels = hlsInstance.levels;
-                        console.log('📊 Niveles encontrados:', levels.map(l => ({ height: l.height, name: l.name })));
-                        
-                        // Buscar 1080p
-                        const level1080p = levels.findIndex(l => l.height === 1080 || (l.name && l.name.includes('1080')));
-                        if (level1080p !== -1) {
-                          hlsInstance.currentLevel = level1080p;
-                          console.log('✅ 1080p APLICADO - currentLevel:', level1080p);
-                          return;
-                        }
-                        
-                        // Si no hay 1080p, seleccionar el más alto disponible
-                        const maxLevel = levels.length - 1;
-                        hlsInstance.currentLevel = maxLevel;
-                        console.log('⚠️ 1080p no disponible, aplicado máximo:', levels[maxLevel].height, 'p');
-                        return;
-                      }
-                      await new Promise(r => setTimeout(r, 500));
-                    }
-                    console.log('❌ HLS no disponible después de 30 segundos');
+                  // Forzar localStorage preferences a 1080p si es posible
+                  try {
+                    localStorage.setItem('hls_quality', '1080p');
+                    localStorage.setItem('video_quality', '1080p');
+                    console.log('✅ localStorage configurado a 1080p');
+                  } catch (e) {
+                    console.log('⚠️ No se pudo acceder a localStorage');
                   }
                   
-                  force();
+                  console.log('✅ Interceptor 1080p activo');
                 })();
                 """
                 
