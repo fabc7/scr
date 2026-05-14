@@ -271,13 +271,13 @@ async def record_stream(profile_url):
         
                 hours = int(duration_seconds // 3600)
                 minutes = int((duration_seconds % 3600) // 60)
-                seconds = int(duration_seconds % 60)
+                seconds = duration_seconds % 60
         
                 size_mb = size_bytes / (1024 * 1024)
                 size_gb = size_mb / 1024
         
                 print(f"[INFO] Resolution : {width}x{height}")
-                print(f"[INFO] Duration   : {hours:02}:{minutes:02}:{seconds:02}")
+                print(f"[INFO] Duration   : {hours:02}:{minutes:02}:{seconds:05.2f}")
                 print(f"[INFO] Size       : {size_mb:.2f} MB ({size_gb:.2f} GB)")
         
             else:
