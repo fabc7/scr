@@ -5,9 +5,30 @@ import os
 import datetime
 import shutil
 import base64
+import requests
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
+def is_stream_online(username):
+    try:
+        response = requests.get(
+            f"https://stripchat.com/api/front/v2/models/username/{username}/cam",
+            timeout=10
+        )
+
+        data = response.json()
+
+        return (
+            data["user"]["user"]["status"] == "public"
+            and data["cam"]["isCamAvailable"]
+            and data["cam"]["isCamActive"]
+        )
+
+    except Exception as e:
+        print(f"[WARN] API check failed: {e}")
+        return True
+        
 async def record_stream(profile_url):
     if not shutil.which("ffmpeg"):
         print("[ERROR] FFmpeg is not installed on the system.")
@@ -70,8 +91,14 @@ async def record_stream(profile_url):
                     
                     sourceBuffer.appendBuffer = function(buffer) {
                         if (buffer && (buffer.length || buffer.byteLength)) {
+                            const uint8 = new Uint8Array(buffer);
+                        
+                            // Ignore tiny metadata / keepalive chunks
+                            if (uint8.length < 5000) {
+                                return originalAppendBuffer.apply(this, arguments);
+                            }
+                        
                             try {
-                                const uint8 = new Uint8Array(buffer);
                                 let binary = '';
                                 const chunkSize = 8192;
                                 for (let i = 0; i < uint8.length; i += chunkSize) {
@@ -112,35 +139,58 @@ async def record_stream(profile_url):
 
                 print("[INFO] Recording started. Target limit: 15 GB or stream end.")
                 
-                seconds_without_data = 0
-                previous_size = 0
+                seconds_without_video = 0
+                previous_video_size = 0
+                
+                last_api_check = 0
+                
+                MIN_REAL_GROWTH = 512 * 1024
+                API_CHECK_INTERVAL = 60
+                VIDEO_TIMEOUT = 60
                 MAX_BYTES = 30 * 1024 * 1024 * 1024 # 30 GB
                 # MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
                 
                 while True:
                     await asyncio.sleep(5)
                     
-                    current_size = sum(
-                        os.path.getsize(info["name"]) 
-                        for info in raw_files.values() 
-                        if os.path.exists(info["name"])
+                    video_size = sum(
+                        os.path.getsize(info["name"])
+                        for info in raw_files.values()
+                        if info["type"] == "mp4" and os.path.exists(info["name"])
                     )
                     
-                    if current_size > previous_size:
-                        seconds_without_data = 0
-                        previous_size = current_size
-                    else:
-                        seconds_without_data += 5
-                        
-                    downloaded_mb = current_size / (1024 * 1024)
-                    print(f"Status: Recording... Current size: {downloaded_mb:.2f} MB 30000 MB", end="\r")
+                    growth = video_size - previous_video_size
 
-                    if current_size >= MAX_BYTES:
-                        print(f"\n\n[INFO] Target size size 15000 MB reached ({downloaded_mb:.2f} MB). Stopping recording.")
+                    if growth >= MIN_REAL_GROWTH:
+                        seconds_without_video = 0
+                    else:
+                        seconds_without_video += 5
+                    
+                    previous_video_size = video_size
+                        
+                    downloaded_mb = video_size / (1024 * 1024)
+                    print(
+                        f"Recording... "
+                        f"Video: {downloaded_mb:.2f} MB | "
+                        f"No video: {seconds_without_video}s",
+                        end="\r"
+                    )
+
+                    current_time = time.time()
+                    if current_time - last_api_check >= API_CHECK_INTERVAL:
+                        username = profile_url.rstrip('/').split('/')[-1]
+                        if not is_stream_online(username):
+                            print("\n\n[INFO] API reports stream offline. Stopping recording.")
+                            break
+                    
+                        last_api_check = current_time
+
+                    if video_size >= MAX_BYTES:
+                        print(f"\n\n[INFO] Target size size 30000 MB reached ({downloaded_mb:.2f} MB). Stopping recording.")
                         break
                         
-                    if seconds_without_data >= 30:
-                        if current_size == 0:
+                    if seconds_without_video >= VIDEO_TIMEOUT:
+                        if video_size == 0:
                             print("\n\n[WARN] Stream never started or the model is currently offline (0 bytes captured).")
                         else:
                             print("\n\n[INFO] Video stream stopped receiving data. Stopping recording.")
