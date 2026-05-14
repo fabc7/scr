@@ -98,12 +98,7 @@ async def record_stream(profile_url):
                     sourceBuffer.appendBuffer = function(buffer) {
                         if (buffer && (buffer.length || buffer.byteLength)) {
                             const uint8 = new Uint8Array(buffer);
-                        
-                            // Ignore tiny metadata / keepalive chunks
-                            if (uint8.length < 5000) {
-                                return originalAppendBuffer.apply(this, arguments);
-                            }
-                        
+                    
                             try {
                                 let binary = '';
                                 const chunkSize = 8192;
