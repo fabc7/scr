@@ -149,7 +149,7 @@ async def record_stream(profile_url):
                 API_CHECK_INTERVAL = 60
                 VIDEO_TIMEOUT = 60
                 # MAX_BYTES = 30 * 1024 * 1024 * 1024 # 30 GB
-                MAX_BYTES = 100 * 1024 * 1024 # Test 100 mb
+                MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
                 
                 while True:
                     await asyncio.sleep(5)
@@ -252,18 +252,39 @@ async def record_stream(profile_url):
                 'ffprobe',
                 '-v', 'error',
                 '-select_streams', 'v:0',
-                '-show_entries', 'stream=width,height',
-                '-of', 'csv=p=0',
+                '-show_entries',
+                'stream=width,height:format=duration,size',
+                '-of',
+                'default=noprint_wrappers=1:nokey=1',
                 largest_file
             ]
+        
             result = subprocess.run(probe_cmd, capture_output=True, text=True)
+        
             if result.returncode == 0:
-                resolution = result.stdout.strip()
-                print(f"[INFO] Stream video resolution: {resolution}")
+                lines = result.stdout.strip().splitlines()
+        
+                width = lines[0]
+                height = lines[1]
+                duration_seconds = float(lines[2])
+                size_bytes = int(lines[3])
+        
+                hours = int(duration_seconds // 3600)
+                minutes = int((duration_seconds % 3600) // 60)
+                seconds = int(duration_seconds % 60)
+        
+                size_mb = size_bytes / (1024 * 1024)
+                size_gb = size_mb / 1024
+        
+                print(f"[INFO] Resolution : {width}x{height}")
+                print(f"[INFO] Duration   : {hours:02}:{minutes:02}:{seconds:02}")
+                print(f"[INFO] Size       : {size_mb:.2f} MB ({size_gb:.2f} GB)")
+        
             else:
-                print("[WARN] Could not determine stream video resolution")
+                print("[WARN] Could not determine video information")
+        
         except Exception as e:
-            print(f"[WARN] Error getting resolution: {e}")
+            print(f"[WARN] Error getting video info: {e}")
 
         """
         ffmpeg_cmd = [
