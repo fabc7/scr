@@ -14,8 +14,14 @@ def is_stream_online(username):
     try:
         response = requests.get(
             f"https://stripchat.com/api/front/v2/models/username/{username}/cam",
-            timeout=10
+            timeout=10,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
         )
+
+        if response.status_code != 200:
+            return True
 
         data = response.json()
 
