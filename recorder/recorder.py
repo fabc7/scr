@@ -6,15 +6,16 @@ import datetime
 import shutil
 import base64
 import requests
-import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def log(message, end="\n"):
+    """Log con timestamp detallado"""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {message}", end=end)
 
 def is_stream_online(username):
+    """Verifica si el stream está en vivo mediante API de Stripchat"""
     try:
         response = requests.get(
             f"https://stripchat.com/api/front/v2/models/username/{username}/cam",
@@ -23,22 +24,34 @@ def is_stream_online(username):
                 "User-Agent": "Mozilla/5.0"
             }
         )
-
         if response.status_code != 200:
+            log(f"[API CHECK] Status code {response.status_code}, asumiendo stream activo")
             return True
-
-        data = response.json()
-
-        return (
-            data["user"]["user"]["status"] == "public"
-            and data["cam"]["isCamAvailable"]
-            and data["cam"]["isCamActive"]
-        )
-
-    except Exception as e:
-        log(f"[WARN] API check failed: {e}")
-        return True
         
+        data = response.json()
+        status = data["user"]["user"]["status"]
+        is_cam_available = data["cam"]["isCamAvailable"]
+        is_cam_active = data["cam"]["isCamActive"]
+        
+        online = (
+            status == "public"
+            and is_cam_available
+            and is_cam_active
+        )
+        
+        log(f"[API CHECK] Status: {status} | Available: {is_cam_available} | Active: {is_cam_active} | Online: {online}")
+        return online
+        
+    except requests.exceptions.Timeout:
+        log(f"[WARN] API timeout, asumiendo stream activo")
+        return True
+    except requests.exceptions.RequestException as e:
+        log(f"[WARN] API error: {e}")
+        return True
+    except (KeyError, ValueError) as e:
+        log(f"[WARN] API response parsing error: {e}")
+        return True
+
 async def record_stream(profile_url):
     if not shutil.which("ffmpeg"):
         log("[ERROR] FFmpeg is not installed on the system.")
@@ -46,6 +59,8 @@ async def record_stream(profile_url):
 
     raw_files = {}
     browser = None
+    last_api_check = datetime.datetime.now()
+    api_check_interval = 120  # 2 minutos
 
     try:
         async with async_playwright() as p:
@@ -68,11 +83,10 @@ async def record_stream(profile_url):
                             "file": open(tmp_name, "wb"),
                             "name": tmp_name,
                             "type": ext,
-                            "flush_counter": 0
+                            "flush_counter": 0,
+                            "total_bytes": 0
                         }
-                        log(f"[STREAM INFO]")
-                        log(f"  MIME: {mime_type}")
-                        log(f"  EXT: {ext}")
+                        log(f"[STREAM INFO] Buffer ID: {buffer_id} | MIME: {mime_type} | EXT: {ext} | Path: {tmp_name}")
                     except Exception as e:
                         log(f"[ERROR] Failed to create temp file {tmp_name}: {e}")
                         return
@@ -82,12 +96,15 @@ async def record_stream(profile_url):
                     f = raw_files[buffer_id]["file"]
                     f.write(data)
                     raw_files[buffer_id]["flush_counter"] += len(data)
+                    raw_files[buffer_id]["total_bytes"] += len(data)
+                    
                     if raw_files[buffer_id]["flush_counter"] >= 5 * 1024 * 1024:
                         f.flush()
+                        log(f"[BUFFER FLUSH] Buffer {buffer_id} flushed ({raw_files[buffer_id]['flush_counter'] / (1024*1024):.2f} MB)")
                         raw_files[buffer_id]["flush_counter"] = 0
                         
                 except Exception as e:
-                    log(f"\n[WARN] Failed to decode or write chunk: {e}")
+                    log(f"[WARN] Failed to decode or write chunk to buffer {buffer_id}: {e}")
 
             await page.expose_function("python_append_chunk", python_append_chunk)
 
@@ -101,9 +118,8 @@ async def record_stream(profile_url):
                     
                     sourceBuffer.appendBuffer = function(buffer) {
                         if (buffer && (buffer.length || buffer.byteLength)) {
-                            const uint8 = new Uint8Array(buffer);
-                    
                             try {
+                                const uint8 = new Uint8Array(buffer);
                                 let binary = '';
                                 const chunkSize = 8192;
                                 for (let i = 0; i < uint8.length; i += chunkSize) {
@@ -125,85 +141,79 @@ async def record_stream(profile_url):
 
             log(f"[INFO] Navigating to: {profile_url}")
             
+            # Extraer username de la URL para verificar si está online
+            username = profile_url.rstrip('/').split('/')[-1]
+            log(f"[INFO] Username extracted: {username}")
+            
             try:
                 await page.goto(profile_url, wait_until="domcontentloaded", timeout=45000)
+                log("[INFO] Page loaded successfully")
                 
                 # Attempt to bypass age restrictions if present
                 try:
                     await page.locator("button:has-text('I Agree'), button:has-text('Estoy de acuerdo')").first.click(timeout=3000)
+                    log("[INFO] Age restriction dialog bypassed")
                 except Exception:
-                    pass 
+                    log("[DEBUG] No age restriction dialog found")
                     
                 await page.mouse.wheel(0, 500)
+                log("[DEBUG] Page scrolled")
                 
                 # Attempt to click play if autoplay is disabled
                 try:
                     await page.locator(".video-player-play-button, button:has-text('Play')").first.click(timeout=3000)
+                    log("[INFO] Play button clicked")
                 except Exception:
-                    pass
+                    log("[DEBUG] No play button found or autoplay enabled")
 
-                log("[INFO] Recording started. Target limit: 15 GB or stream end.")
+                log("[INFO] Recording started. Target limit: 30 GB or stream end.")
+                log("[INFO] Will check if stream is online every 2 minutes via API")
                 
-                seconds_without_video = 0
-                previous_video_size = 0
-                
-                last_api_check = 0
-                
-                MIN_REAL_GROWTH = 512 * 1024
-                API_CHECK_INTERVAL = 60
-                VIDEO_TIMEOUT = 60
-                # MAX_BYTES = 30 * 1024 * 1024 * 1024 # 30 GB
-                MAX_BYTES = 20 * 1024 * 1024 # Test 20 mb
+                seconds_without_data = 0
+                previous_size = 0
+                # MAX_BYTES = 30 * 1024 * 1024 * 1024  # 30 GB
+                MAX_BYTES = 30 * 1024 * 1024  # Test 30 mb
                 
                 while True:
                     await asyncio.sleep(5)
                     
-                    video_size = sum(
-                        os.path.getsize(info["name"])
-                        for info in raw_files.values()
-                        if info["type"] == "mp4" and os.path.exists(info["name"])
-                    )
-                    
-                    growth = video_size - previous_video_size
-
-                    if growth >= MIN_REAL_GROWTH:
-                        seconds_without_video = 0
-                    else:
-                        seconds_without_video += 5
-                    
-                    previous_video_size = video_size
-                        
-                    downloaded_mb = video_size / (1024 * 1024)
-                    log(
-                        f"Recording... "
-                        f"Video: {downloaded_mb:.2f} MB | "
-                        f"No video: {seconds_without_video}s",
-                        end="\r"
-                    )
-
-                    current_time = time.time()
-                    if current_time - last_api_check >= API_CHECK_INTERVAL:
-                        username = profile_url.rstrip('/').split('/')[-1]
+                    # Verificar cada 2 minutos si el stream está online
+                    current_time = datetime.datetime.now()
+                    if (current_time - last_api_check).total_seconds() >= api_check_interval:
+                        last_api_check = current_time
                         if not is_stream_online(username):
-                            log("\n\n[INFO] API reports stream offline. Stopping recording.")
+                            log("[INFO] Stream is OFFLINE according to API check. Stopping recording.")
                             break
                     
-                        last_api_check = current_time
+                    current_size = sum(
+                        os.path.getsize(info["name"]) 
+                        for info in raw_files.values() 
+                        if os.path.exists(info["name"])
+                    )
+                    
+                    if current_size > previous_size:
+                        seconds_without_data = 0
+                        previous_size = current_size
+                    else:
+                        seconds_without_data += 5
+                        
+                    downloaded_mb = current_size / (1024 * 1024)
+                    log(f"[RECORDING] Size: {downloaded_mb:.2f} MB / 30000 MB | No data for: {seconds_without_data}s", end="\r")
 
-                    if video_size >= MAX_BYTES:
-                        log(f"\n\n[INFO] Target size size 30000 MB reached ({downloaded_mb:.2f} MB). Stopping recording.")
+                    if current_size >= MAX_BYTES:
+                        log(f"\n[INFO] Target size 30000 MB reached ({downloaded_mb:.2f} MB). Stopping recording.")
                         break
                         
-                    if seconds_without_video >= VIDEO_TIMEOUT:
-                        if video_size == 0:
-                            log("\n\n[WARN] Stream never started or the model is currently offline (0 bytes captured).")
+                    if seconds_without_data >= 30:
+                        if current_size == 0:
+                            log("\n[WARN] Stream never started or the model is currently offline (0 bytes captured).")
                         else:
-                            log("\n\n[INFO] Video stream stopped receiving data. Stopping recording.")
+                            log(f"\n[INFO] Video stream stopped receiving data for 30 seconds. Stopping recording.")
                         break
                         
                     try:
                         if await page.locator("text='Offline', text='is offline', .offline-screen").count() > 0:
-                            log("\n\n[INFO] Offline screen detected. Stopping recording.")
+                            log("\n[INFO] Offline screen detected on page. Stopping recording.")
                             break
                     except Exception:
                         pass
@@ -212,35 +222,43 @@ async def record_stream(profile_url):
                 log(f"\n[ERROR] Navigation or recording interrupted: {str(e)}")
 
     finally:
+        log("[INFO] Entering cleanup phase...")
+        
         # Guarantee browser closure
         if browser:
             try:
                 await browser.close()
-            except Exception:
-                pass
+                log("[INFO] Browser closed successfully")
+            except Exception as e:
+                log(f"[WARN] Error closing browser: {e}")
 
         # Guarantee safe closure and validation of raw files
         valid_files = []
+        log(f"[INFO] Closing and validating {len(raw_files)} buffer(s)...")
+        
         for buf_id, info in raw_files.items():
             try:
                 info["file"].flush()
                 info["file"].close()
-            except Exception:
-                pass
+                log(f"[DEBUG] Buffer {buf_id} closed (total: {info['total_bytes'] / (1024*1024):.2f} MB)")
+            except Exception as e:
+                log(f"[WARN] Error closing buffer {buf_id}: {e}")
             
             if os.path.exists(info["name"]) and os.path.getsize(info["name"]) > 1000:
                 valid_files.append(info["name"])
+                log(f"[INFO] Buffer {buf_id} validated as valid ({os.path.getsize(info['name']) / (1024*1024):.2f} MB)")
             else:
                 try: 
                     os.remove(info["name"])
-                except Exception: 
-                    pass
+                    log(f"[INFO] Buffer {buf_id} removed (size < 1KB)")
+                except Exception:
+                    log(f"[WARN] Could not delete buffer {buf_id}")
 
         if not valid_files:
-            print("\n[WARN] No valid video chunks were captured. Aborting merge process.")
+            log("[WARN] No valid video chunks were captured. Aborting merge process.")
             return
 
-        log("\n[INFO] Merging video and audio streams using FFmpeg...")
+        log(f"[INFO] Merging {len(valid_files)} stream file(s) using FFmpeg...")
         
         model_name = profile_url.rstrip('/').split('/')[-1]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -248,85 +266,61 @@ async def record_stream(profile_url):
         final_output_path = os.path.join(SCRIPT_DIR, video_filename)
 
         largest_file = max(valid_files, key=os.path.getsize)
-
-        log(f"[INFO] Using stream file: {largest_file}")
+        log(f"[INFO] Using largest stream file: {largest_file} ({os.path.getsize(largest_file) / (1024*1024):.2f} MB)")
 
         try:
             probe_cmd = [
                 'ffprobe',
                 '-v', 'error',
                 '-select_streams', 'v:0',
-                '-show_entries',
-                'stream=width,height:format=duration,size',
-                '-of',
-                'default=noprint_wrappers=1:nokey=1',
+                '-show_entries', 'stream=width,height',
+                '-of', 'csv=p=0',
                 largest_file
             ]
-        
             result = subprocess.run(probe_cmd, capture_output=True, text=True)
-        
             if result.returncode == 0:
-                lines = result.stdout.strip().splitlines()
-        
-                width = lines[0]
-                height = lines[1]
-                duration_seconds = float(lines[2])
-                size_bytes = int(lines[3])
-        
-                hours = int(duration_seconds // 3600)
-                minutes = int((duration_seconds % 3600) // 60)
-                seconds = duration_seconds % 60
-        
-                size_mb = size_bytes / (1024 * 1024)
-                size_gb = size_mb / 1024
-        
-                log(f"[INFO] Resolution : {width}x{height}")
-                log(f"[INFO] Duration   : {hours:02}:{minutes:02}:{seconds:05.2f}")
-                log(f"[INFO] Size       : {size_mb:.2f} MB ({size_gb:.2f} GB)")
-        
+                resolution = result.stdout.strip()
+                log(f"[INFO] Detected video resolution: {resolution}")
             else:
-                log("[WARN] Could not determine video information")
-        
+                log("[WARN] Could not determine stream video resolution")
         except Exception as e:
-            log(f"[WARN] Error getting video info: {e}")
+            log(f"[WARN] Error probing video: {e}")
 
-        """
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y',
-            '-i', largest_file,
-            '-c', 'copy',
-            final_output_path
-        ]
-        """
+        log("[INFO] Starting FFmpeg encoding (scale 1920x1080, libx264, preset slow)...")
         
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',
+            '-fflags', '+genpts',
             '-i', largest_file,
-            '-vf', 'scale=1920:1080:flags=bicubic',
+            '-vf', 'scale=1920:1080:flags=bilinear',
             '-c:v', 'libx264',
-            '-preset', 'faster',
-            '-crf', '16',
+            '-preset', 'veryfast',
+            '-crf', '19',
             '-profile:v', 'high',
+            '-level', '4.2',
             '-pix_fmt', 'yuv420p',
             '-movflags', '+faststart',
-            '-c:a', 'copy',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            '-ar', '48000',
             final_output_path
         ]
+        
         try:
+            log("[INFO] FFmpeg command: " + " ".join(ffmpeg_cmd))
             result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
-                log(f"\n[ERROR] FFmpeg failed to merge files. STDERR details:\n{result.stderr}")
+                log(f"[ERROR] FFmpeg failed to merge files. STDERR:\n{result.stderr}")
             elif os.path.exists(final_output_path):
                 final_size_mb = os.path.getsize(final_output_path) / (1024 * 1024)
-                log(f"\n[SUCCESS] File successfully saved as {final_output_path} ({final_size_mb:.2f} MB).")
+                log(f"[SUCCESS] File successfully saved as {final_output_path} ({final_size_mb:.2f} MB)")
             else:
-                log("\n[ERROR] FFmpeg execution completed, but the output file is missing.")
+                log("[ERROR] FFmpeg execution completed, but the output file is missing.")
                 
         except Exception as e:
-             log(f"\n[ERROR] Exception occurred while running FFmpeg: {e}")
+             log(f"[ERROR] Exception occurred while running FFmpeg: {e}")
 
         # Guarantee cleanup of temporary chunks
         log("[INFO] Cleaning up temporary chunk files...")
@@ -334,8 +328,11 @@ async def record_stream(profile_url):
             try: 
                 if os.path.exists(f):
                     os.remove(f)
+                    log(f"[DEBUG] Deleted temporary file: {f}")
             except Exception as e: 
                 log(f"[WARN] Could not delete temporary file {f}: {e}")
+        
+        log("[INFO] Recording and encoding process completed.")
 
 if __name__ == "__main__":
     target_url = os.environ.get("STREAM_URL")
@@ -343,4 +340,7 @@ if __name__ == "__main__":
     if not target_url:
         log("[ERROR] No STREAM_URL provided. Exiting.")
     else:
+        log(f"[START] Stream Recorder initialized")
+        log(f"[START] Target URL: {target_url}")
         asyncio.run(record_stream(target_url))
+        log(f"[END] Stream Recorder finished")
