@@ -52,101 +52,6 @@ def is_stream_online(username):
         log(f"[WARN] API response parsing error: {e}")
         return True
 
-async def set_highest_resolution(page):
-    """Cambia la resolución del stream a la máxima disponible con verificación"""
-    max_retries = 3
-    retry_count = 0
-    
-    while retry_count < max_retries:
-        try:
-            log(f"[INFO] Attempting to set highest resolution (attempt {retry_count + 1}/{max_retries})...")
-            
-            # Ejecutar JavaScript para cambiar resolución y retornar la calidad seleccionada
-            result = await page.evaluate("""
-            (async () => {
-                const btn = document.querySelector(".player-resolution");
-                if (!btn) {
-                    console.log("No se encontró el botón de resolución");
-                    return { success: false, reason: "No button found" };
-                }
-                
-                // Abrir menú de resolución
-                ["mouseover", "mousedown", "mouseup", "click"].forEach(type => {
-                    btn.dispatchEvent(new MouseEvent(type, {
-                        bubbles: true,
-                        cancelable: true,
-                        view: window
-                    }));
-                });
-                
-                // Esperar a que aparezca el menú
-                await new Promise(r => setTimeout(r, 800));
-                
-                // Obtener opciones de resolución
-                const options = [
-                    ...document.querySelectorAll(
-                        ".player-resolution-tooltip__button"
-                    )
-                ];
-                
-                if (!options.length) {
-                    console.log("No se encontraron opciones de resolución");
-                    return { success: false, reason: "No options found" };
-                }
-                
-                // Ordenar por resolución más alta
-                const best = options
-                    .map(el => ({
-                        el,
-                        text: el.innerText.trim(),
-                        value: parseInt(el.innerText) || 0
-                    }))
-                    .sort((a, b) => b.value - a.value)[0];
-                
-                if (best?.el) {
-                    best.el.click();
-                    console.log("Calidad seleccionada:", best.text);
-                    return { success: true, quality: best.text };
-                } else {
-                    console.log("No se pudo seleccionar calidad");
-                    return { success: false, reason: "Could not find best quality" };
-                }
-            })();
-            """)
-            
-            if result.get("success"):
-                log(f"[SUCCESS] Resolution changed to: {result.get('quality', 'Unknown')}")
-                
-                # Esperar a que el stream se reinicie con la nueva resolución
-                log("[INFO] Waiting for stream to adapt to new resolution (10 seconds)...")
-                await asyncio.sleep(10)
-                
-                return True
-            else:
-                reason = result.get("reason", "Unknown error")
-                log(f"[WARN] Failed to change resolution: {reason}")
-                retry_count += 1
-                
-                if retry_count < max_retries:
-                    log(f"[INFO] Retrying in 3 seconds...")
-                    await asyncio.sleep(3)
-                else:
-                    log("[WARN] Max retries reached for resolution change")
-                    return False
-            
-        except Exception as e:
-            log(f"[WARN] Error setting resolution: {e}")
-            retry_count += 1
-            
-            if retry_count < max_retries:
-                log(f"[INFO] Retrying in 3 seconds...")
-                await asyncio.sleep(3)
-            else:
-                log("[WARN] Could not set resolution after max retries")
-                return False
-    
-    return False
-
 async def record_stream(profile_url):
     if not shutil.which("ffmpeg"):
         log("[ERROR] FFmpeg is not installed on the system.")
@@ -260,27 +165,6 @@ async def record_stream(profile_url):
                     log("[INFO] Play button clicked")
                 except Exception:
                     log("[DEBUG] No play button found or autoplay enabled")
-                
-                # Set resolution to highest available
-                try:
-                    await set_highest_resolution(page)
-                except Exception as e:
-                    log(f"[WARN] Could not set resolution: {e}")
-                
-                # Clear any buffers created before resolution change
-                buffers_before_resolution = set(raw_files.keys())
-                log(f"[INFO] Clearing pre-resolution buffers: {buffers_before_resolution}")
-                
-                # Close and remove old buffers
-                for buf_id in buffers_before_resolution:
-                    try:
-                        raw_files[buf_id]["file"].close()
-                        if os.path.exists(raw_files[buf_id]["name"]):
-                            os.remove(raw_files[buf_id]["name"])
-                        del raw_files[buf_id]
-                        log(f"[INFO] Cleared buffer {buf_id}")
-                    except Exception as e:
-                        log(f"[WARN] Could not clear buffer {buf_id}: {e}")
 
                 log("[INFO] Recording started. Target limit: 30 GB or stream end.")
                 log("[INFO] Will check if stream is online every 2 minutes via API")
