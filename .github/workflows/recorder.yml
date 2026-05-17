@@ -10,28 +10,30 @@ on:
 jobs:
   record-and-upload:
     runs-on: ubuntu-latest
-    #env:
-      #FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      #- name: Free Disk Space
-        #uses: jlumbroso/free-disk-space@v1.3.1
-        #with:
-          #tool-cache: true
-          #android: true
-          #dotnet: true
-          #haskell: true
-          #large-packages: true
-          #docker-images: true
-          #swap-storage: true
-
-      - name: Check Disk Space
+      - name: Check disk space
+        id: disk
         run: |
-          echo "Disk space:"
-          df -h /
+          avail_kb=$(df --output=avail / | tail -1)
+          avail_gb=$((avail_kb / 1024 / 1024))
+          
+          echo "avail_gb=$avail_gb" >> $GITHUB_OUTPUT
+          echo "Disk available: ${avail_gb}GB"
+      
+      - name: Free disk space (if needed)
+        if: ${{ fromJSON(steps.disk.outputs.avail_gb) < 50 }}
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
 
       - name: Try setup-ffmpeg
         uses: FedericoCarboni/setup-ffmpeg@v3
