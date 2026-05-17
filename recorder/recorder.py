@@ -6,11 +6,14 @@ import datetime
 import shutil
 import base64
 import requests
+import time
 
 FORCE_1080P_RECORDING = True 
 ENABLE_1080P_REENCODE = False 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+WORKFLOW_START_UNIX = int(os.getenv('WORKFLOW_START_UNIX', str(int(time.time()))))
 
 def log(message, end="\n"):
     """Log con timestamp detallado"""
@@ -419,6 +422,13 @@ async def record_stream(profile_url):
             except Exception as e: 
                 log(f"[WARN] Could not delete temporary file {f}: {e}")
         
+        elapsed_seconds = time.time() - WORKFLOW_START_UNIX
+        elapsed_hours = elapsed_seconds / 3600
+        elapsed_minutes = (elapsed_seconds % 3600) / 60
+        elapsed_secs = elapsed_seconds % 60
+        
+        log(f"\n[WORKFLOW TIME] Total execution time: {int(elapsed_hours)}h {int(elapsed_minutes)}m {int(elapsed_secs)}s ({elapsed_seconds:.0f}s)")
+        log(f"[WORKFLOW TIME] Remaining time: {(6*3600 - elapsed_seconds)/3600:.1f} horas")
         log("[INFO] Recording and encoding process completed.")
 
 if __name__ == "__main__":
