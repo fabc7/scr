@@ -246,8 +246,8 @@ async def record_stream(profile_url):
                 
                 seconds_without_data = 0
                 previous_size = 0
-                # MAX_BYTES = 30 * 1024 * 1024 * 1024  # 30 GB
-                MAX_BYTES = 20 * 1024 * 1024  # Testing 30 mb
+                MAX_BYTES = 30 * 1024 * 1024 * 1024  # 30 GB
+                # MAX_BYTES = 20 * 1024 * 1024  # Testing 30 mb
                 
                 while True:
                     await asyncio.sleep(5)
@@ -346,7 +346,7 @@ async def record_stream(profile_url):
         elapsed_seconds = time.time() - WORKFLOW_START_UNIX
         elapsed_hours = elapsed_seconds / 3600
         
-        if True:
+        if elapsed_hours >= 4:
             log(f"\n[WARN] 4 horas alcanzadas ({elapsed_hours:.2f}h). Saltando reencode.")
             model_name = profile_url.rstrip('/').split('/')[-1]
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
