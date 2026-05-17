@@ -32,6 +32,17 @@ jobs:
         run: |
           echo "Disk space:"
           df -h /
+
+      - name: Try setup-ffmpeg
+        uses: FedericoCarboni/setup-ffmpeg@v3
+        continue-on-error: true
+
+      - name: Ensure ffmpeg is functional
+        run: |
+          ffmpeg -version >/dev/null 2>&1 || (
+            sudo apt-get update -qq &&
+            sudo apt-get install -y ffmpeg
+          )
           
       - name: Setup Python
         uses: actions/setup-python@v5
