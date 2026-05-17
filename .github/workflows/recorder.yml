@@ -36,6 +36,8 @@ jobs:
       - name: Try setup-ffmpeg
         uses: FedericoCarboni/setup-ffmpeg@v3
         continue-on-error: true
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Ensure ffmpeg is functional
         run: |
