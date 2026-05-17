@@ -11,6 +11,11 @@ jobs:
   record-and-upload:
     runs-on: ubuntu-latest
     steps:
+
+      - name: Capture workflow start time
+        id: start_time
+        run: echo "unix_timestamp=$(date +%s)" >> $GITHUB_OUTPUT
+          
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -62,6 +67,7 @@ jobs:
       - name: Run Recording Script
         env:
           STREAM_URL: ${{ github.event.inputs.stream_url }}
+          WORKFLOW_START_UNIX: ${{ steps.start_time.outputs.unix_timestamp }}
         run: python recorder/recorder.py
 
       - name: Upload Video to YouTube
