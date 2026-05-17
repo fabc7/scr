@@ -246,8 +246,8 @@ async def record_stream(profile_url):
                 
                 seconds_without_data = 0
                 previous_size = 0
-                MAX_BYTES = 30 * 1024 * 1024 * 1024  # 30 GB
-                # MAX_BYTES = 20 * 1024 * 1024  # Testing 30 mb
+                # MAX_BYTES = 30 * 1024 * 1024 * 1024  # 30 GB
+                MAX_BYTES = 20 * 1024 * 1024  # Testing 30 mb
                 
                 while True:
                     await asyncio.sleep(5)
@@ -341,6 +341,21 @@ async def record_stream(profile_url):
 
         if not valid_files:
             log("[WARN] No valid video chunks were captured. Aborting merge process.")
+            return
+
+        elapsed_seconds = time.time() - WORKFLOW_START_UNIX
+        elapsed_hours = elapsed_seconds / 3600
+        
+        if True:
+            log(f"\n[WARN] 4 horas alcanzadas ({elapsed_hours:.2f}h). Saltando reencode.")
+            model_name = profile_url.rstrip('/').split('/')[-1]
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            final_output_path = os.path.join(SCRIPT_DIR, f"{model_name}_{timestamp}.mkv")
+            shutil.copy2(max(valid_files, key=os.path.getsize), final_output_path)
+            log(f"[SUCCESS] Archivo guardado: {final_output_path}")
+            for f in valid_files:
+                try: os.remove(f)
+                except: pass
             return
 
         log(f"[INFO] Merging {len(valid_files)} stream file(s) using FFmpeg...")
