@@ -1,11 +1,14 @@
 import asyncio
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, Error as PlaywrightError
 import subprocess
 import os
 import datetime
 import shutil
 import base64
 import requests
+
+FORCE_1080P_RECORDING = True 
+ENABLE_1080P_REENCODE = False 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,27 +56,103 @@ def is_stream_online(username):
         return True
 
 async def record_stream(profile_url):
+    loop = asyncio.get_running_loop()
+    def global_exception_handler(loop, context):
+        exception = context.get("exception")
+        if exception:
+            err_name = type(exception).__name__
+            err_msg = str(exception)
+            if "TargetClosedError" in err_name or "Target page, context or browser has been closed" in err_msg:
+                return
+        loop.default_exception_handler(context)
+    loop.set_exception_handler(global_exception_handler)
+
     if not shutil.which("ffmpeg"):
         log("[ERROR] FFmpeg is not installed on the system.")
         return
 
     raw_files = {}
     browser = None
+    context = None
+    page = None
     last_api_check = datetime.datetime.now()
     api_check_interval = 120  # 2 minutos
+    
+    is_shutting_down = False
 
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
+            
+            viewport_config = {"width": 1920, "height": 1080} if FORCE_1080P_RECORDING else {"width": 1280, "height": 720}
+            
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 720}
+                viewport=viewport_config
             )
+            
+            async def force_1080p_hls(route):
+                if is_shutting_down:
+                    return 
+                
+                try:
+                    url = route.request.url
+                    if ".m3u8" in url:
+                        try:
+                            response = await route.fetch()
+                            text = await response.text()
+                            
+                            if "RESOLUTION=" in text:
+                                lines = text.split('\n')
+                                new_m3u8 = []
+                                skip_next_url = False
+                                
+                                for line in lines:
+                                    if line.startswith("#EXT-X-STREAM-INF"):
+                                        if "1080" not in line:
+                                            skip_next_url = True
+                                            continue
+                                        else:
+                                            skip_next_url = False
+                                    
+                                    if skip_next_url and not line.startswith("#"):
+                                        skip_next_url = False
+                                        continue
+                                    
+                                    new_m3u8.append(line)
+                                
+                                if not any("1080" in l for l in new_m3u8):
+                                    await route.fulfill(response=response, body=text)
+                                else:
+                                    await route.fulfill(response=response, body="\n".join(new_m3u8))
+                            else:
+                                await route.fulfill(response=response, body=text)
+                                
+                        except PlaywrightError:
+                            pass
+                        except Exception:
+                            try: await route.continue_() 
+                            except: pass
+                    else:
+                        try: await route.continue_() 
+                        except: pass
+                        
+                except PlaywrightError:
+                    pass
+                except Exception:
+                    pass
+
+            if FORCE_1080P_RECORDING:
+                await context.route("**/*", force_1080p_hls)
+
             page = await context.new_page()
 
             log("[INFO] Injecting MediaSource interceptor into the browser...")
 
             async def python_append_chunk(buffer_id, mime_type, b64_data):
+                if is_shutting_down:
+                    return
+
                 if buffer_id not in raw_files:
                     ext = "mp4" if "video" in mime_type else "m4a"
                     tmp_name = os.path.join(SCRIPT_DIR, f"tmp_{buffer_id}.{ext}")
@@ -141,7 +220,6 @@ async def record_stream(profile_url):
 
             log(f"[INFO] Navigating to: {profile_url}")
             
-            # Extraer username de la URL para verificar si está online
             username = profile_url.rstrip('/').split('/')[-1]
             log(f"[INFO] Username extracted: {username}")
             
@@ -149,13 +227,7 @@ async def record_stream(profile_url):
                 await page.goto(profile_url, wait_until="domcontentloaded", timeout=45000)
                 log("[INFO] Page loaded successfully")
                 
-                # Attempt to bypass age restrictions if present
-                try:
-                    await page.locator("button:has-text('I Agree'), button:has-text('Estoy de acuerdo')").first.click(timeout=3000)
-                    log("[INFO] Age restriction dialog bypassed")
-                except Exception:
-                    log("[DEBUG] No age restriction dialog found")
-                    
+                # Scroll
                 await page.mouse.wheel(0, 500)
                 log("[DEBUG] Page scrolled")
                 
@@ -171,13 +243,12 @@ async def record_stream(profile_url):
                 
                 seconds_without_data = 0
                 previous_size = 0
-                MAX_BYTES = 30 * 1024 * 1024 * 1024  # 30 GB
-                # MAX_BYTES = 30 * 1024 * 1024  # Test 30 mb
+                # MAX_BYTES = 30 * 1024 * 1024 * 1024  # 30 GB
+                MAX_BYTES = 30 * 1024 * 1024  # Testing 30 mb
                 
                 while True:
                     await asyncio.sleep(5)
                     
-                    # Verificar cada 2 minutos si el stream está online
                     current_time = datetime.datetime.now()
                     if (current_time - last_api_check).total_seconds() >= api_check_interval:
                         last_api_check = current_time
@@ -222,9 +293,21 @@ async def record_stream(profile_url):
                 log(f"\n[ERROR] Navigation or recording interrupted: {str(e)}")
 
     finally:
-        log("[INFO] Entering cleanup phase...")
+        is_shutting_down = True
+        log("\n[INFO] Entering cleanup phase...")
         
-        # Guarantee browser closure
+        if context:
+            try: await context.unroute("**/*")
+            except Exception: pass
+            
+        if page:
+            try: await page.close()
+            except Exception: pass
+            
+        if context:
+            try: await context.close()
+            except Exception: pass
+
         if browser:
             try:
                 await browser.close()
@@ -232,7 +315,6 @@ async def record_stream(profile_url):
             except Exception as e:
                 log(f"[WARN] Error closing browser: {e}")
 
-        # Guarantee safe closure and validation of raw files
         valid_files = []
         log(f"[INFO] Closing and validating {len(raw_files)} buffer(s)...")
         
@@ -286,14 +368,19 @@ async def record_stream(profile_url):
         except Exception as e:
             log(f"[WARN] Error probing video: {e}")
 
-        log("[INFO] Starting FFmpeg encoding (scale 1920x1080, libx264, preset slow)...")
+        log(f"[INFO] Starting FFmpeg encoding (Reencode a 1080p: {'Activado' if ENABLE_1080P_REENCODE else 'Desactivado'})...")
         
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',
             '-fflags', '+genpts',
-            '-i', largest_file,
-            '-vf', 'scale=1920:1080:flags=bilinear',
+            '-i', largest_file
+        ]
+        
+        if ENABLE_1080P_REENCODE:
+            ffmpeg_cmd.extend(['-vf', 'scale=1920:1080:flags=bilinear'])
+            
+        ffmpeg_cmd.extend([
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-crf', '19',
@@ -305,7 +392,7 @@ async def record_stream(profile_url):
             '-b:a', '192k',
             '-ar', '48000',
             final_output_path
-        ]
+        ])
         
         try:
             log("[INFO] FFmpeg command: " + " ".join(ffmpeg_cmd))
